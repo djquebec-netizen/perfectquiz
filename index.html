@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Perfect Quiz</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: linear-gradient(135deg, #4b2bbf, #6a5acd);
+      font-family: sans-serif;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #orientation-warning {
+      color: white;
+      font-size: 2em;
+      text-align: center;
+      display: none;
+    }
+
+    #game {
+      width: 2000px;
+      height: 1500px;
+      background: linear-gradient(135deg, #4b2bbf, #6a5acd);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      transform-origin: top left;
+    }
+
+    .player-box {
+      position: absolute;
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 20px;
+      width: 40%;
+      height: 20%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      box-sizing: border-box;
+    }
+
+    .content {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      transform-origin: center;
+    }
+
+    .question {
+      color: white;
+      font-size: clamp(1rem, 2vw, 2rem);
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    .answers {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .answer {
+      background: white;
+      color: black;
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+      font-size: clamp(0.8rem, 1.5vw, 1.5rem);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .answer.correct { background: #4CAF50; color: white; }
+    .answer.wrong { background: #f44336; color: white; animation: blink 0.3s 2; }
+
+    @keyframes blink {
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    #chrono {
+      position: absolute;
+      font-size: 3rem;
+      color: white;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    /* Position des 4 joueurs */
+    #player1 { top: 0; left: 30%; }
+    #player2 { bottom: 0; left: 30%; }
+    #player3 { top: 30%; left: 0; width: 20%; height: 40%; }
+    #player4 { top: 30%; right: 0; width: 20%; height: 40%; }
+
+    #player1 .content { transform: rotate(180deg); }
+    #player3 .content { transform: rotate(90deg); }
+    #player4 .content { transform: rotate(-90deg); }
+
+    #final-time {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%,-50%);
+      font-size: 3rem;
+      color: yellow;
+      display: none;
+    }
+
+    #controls {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+
+<div id="orientation-warning">🔄 Veuillez mettre la tablette en mode paysage</div>
+
+<div id="game">
+  <div id="chrono"></div>
+  <div id="final-time"></div>
+
+  <div id="player1" class="player-box"><div class="content"></div></div>
+  <div id="player2" class="player-box"><div class="content"></div></div>
+  <div id="player3" class="player-box"><div class="content"></div></div>
+  <div id="player4" class="player-box"><div class="content"></div></div>
+
+  <div id="controls">
+    <input type="file" id="csvLoader" accept=".csv">
+    <input type="text" id="sessionCode" placeholder="Code ex: HIST20A">
+    <button onclick="startGame()">Jouer ▶️</button>
+  </div>
+</div>
+
+<audio id="buzz" src="buzz.mp3"></audio>
+
+<script>
+// Gestion orientation + responsive
+function checkOrientation() {
+  if (window.innerHeight > window.innerWidth) {
+    document.getElementById("orientation-warning").style.display = "block";
+    document.getElementById("game").style.display = "none";
+  } else {
+    document.getElementById("orientation-warning").style.display = "none";
+    document.getElementById("game").style.display = "block";
+    scaleGame();
+  }
+}
+window.addEventListener("resize", checkOrientation);
+checkOrientation();
+
+function scaleGame(){
+  const game = document.getElementById("game");
+  const scaleX = window.innerWidth / 2000;
+  const scaleY = window.innerHeight / 1500;
+  const scale = Math.min(scaleX, scaleY);
+  game.style.transform = `scale(${scale})`;
+}
+
+// ================= Quiz Logic =================
+let allQuestions = [];
+let currentQuestions = [];
+let chronoInterval, chronoMode="A", chronoTime=0, chronoMax=0;
+
+document.getElementById("csvLoader").addEventListener("change", function(e){
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function(evt){
+    const lines = evt.target.result.split("\n").map(l=>l.trim()).filter(l=>l);
+    lines.shift(); // remove header
+    allQuestions = lines.map(l=>{
+      const vals = l.split(",");
+      return {
+        theme: vals[0],
+        question: vals[1],
+        reponses: vals.slice(2,6),
+        bonne: parseInt(vals[6])
+      };
+    });
+    alert("CSV chargé avec "+allQuestions.length+" questions !");
+  };
+  reader.readAsText(file);
+});
+
+function parseSessionCode(code){
+  const m = code.match(/^([A-Z]{4})(\d+)([AB])$/);
+  if(!m) return null;
+  return {theme:m[1], nombre:+m[2], mode:m[3]};
+}
+
+function startGame(){
+  const code = document.getElementById("sessionCode").value.trim();
+  const session = parseSessionCode(code);
+  if(!session){alert("Code invalide");return;}
+  chronoMode = session.mode;
+  const themeMap = {
+    HIST:"Histoire", GEOG:"Géographie", SCIE:"Sciences", CINE:"Cinéma", SPOR:"Sport"
+  };
+  const theme = themeMap[session.theme] || "Histoire";
+  const questions = allQuestions.filter(q=>q.theme===theme);
+  currentQuestions = questions.sort(()=>Math.random()-0.5).slice(0,session.nombre);
+
+  distributeQuestions();
+  startChrono(session);
+}
+
+function distributeQuestions(){
+  const players = ["player1","player2","player3","player4"];
+  players.forEach((p,i)=>{
+    const q = currentQuestions[i % currentQuestions.length];
+    renderQuestion(p, q);
+  });
+}
+
+function renderQuestion(playerId, q){
+  const container = document.querySelector("#"+playerId+" .content");
+  container.innerHTML = "";
+  const qDiv = document.createElement("div");
+  qDiv.className = "question";
+  qDiv.innerText = q.question;
+  container.appendChild(qDiv);
+
+  const answersDiv = document.createElement("div");
+  answersDiv.className = "answers";
+  q.reponses.forEach((r,idx)=>{
+    const btn = document.createElement("div");
+    btn.className = "answer";
+    btn.innerText = r;
+    btn.addEventListener("click", ()=>{
+      if(idx+1===q.bonne){
+        btn.classList.add("correct");
+      } else {
+        btn.classList.add("wrong");
+        document.getElementById("buzz").play();
+      }
+    });
+    answersDiv.appendChild(btn);
+  });
+  container.appendChild(answersDiv);
+}
+
+function startChrono(session){
+  chronoTime = 0; clearInterval(chronoInterval);
+  const chronoDiv = document.getElementById("chrono");
+  let maxTimes = {10:300,15:390,20:480,30:600};
+  if(chronoMode==="A"){
+    chronoInterval = setInterval(()=>{
+      chronoTime++;
+      chronoDiv.innerText=formatTime(chronoTime);
+    },1000);
+  }else{
+    chronoMax = maxTimes[session.nombre]||300;
+    chronoTime = chronoMax;
+    chronoInterval = setInterval(()=>{
+      chronoTime--;
+      chronoDiv.innerText=formatTime(chronoTime);
+      if(chronoTime<=0){
+        clearInterval(chronoInterval);
+        endGame();
+      }
+    },1000);
+  }
+}
+
+function formatTime(t){
+  const m = Math.floor(t/60), s=t%60;
+  return `${m}:${s.toString().padStart(2,"0")}`;
+}
+
+function endGame(){
+  document.getElementById("final-time").style.display="block";
+  document.getElementById("final-time").innerText="Temps réalisé : "+formatTime(chronoTime);
+}
+</script>
+<script>
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("service-worker.js");
+  }
+</script>
+</body>
+</html>
